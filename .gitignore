@@ -22,6 +22,11 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Claude
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+
 # Data
 *.db
 *.sqlite
