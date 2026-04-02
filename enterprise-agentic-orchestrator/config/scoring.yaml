@@ -1,0 +1,46 @@
+credit_scoring:
+  weights:
+    profit_margin: 0.20
+    debt_to_asset_ratio: 0.15
+    revenue_trend: 0.15
+    cash_coverage: 0.10
+    years_trading: 0.10
+    sector_outlook: 0.10
+    ccj_history: 0.10
+    security_coverage: 0.10
+  score_range:
+    min: 0
+    max: 100
+  ccj_penalty_per_count: 5
+
+stress_test:
+  scenarios:
+    - name: "mild_recession"
+      description: "GDP decline of 1-2%, moderate increase in defaults"
+      revenue_shock: -0.10
+      cost_increase: 0.05
+      default_rate_multiplier: 1.5
+    - name: "severe_recession"
+      description: "GDP decline of 4-5%, significant increase in defaults"
+      revenue_shock: -0.25
+      cost_increase: 0.15
+      default_rate_multiplier: 3.0
+    - name: "sector_shock"
+      description: "Sector-specific downturn, major revenue impact"
+      revenue_shock: -0.35
+      cost_increase: 0.10
+      default_rate_multiplier: 2.5
+    - name: "rate_shock"
+      description: "Interest rate increase of 300bps, increased borrowing costs"
+      revenue_shock: -0.05
+      cost_increase: 0.25
+      default_rate_multiplier: 1.8
+    - name: "combined_stress"
+      description: "Recession plus sector shock plus rate increase"
+      revenue_shock: -0.40
+      cost_increase: 0.30
+      default_rate_multiplier: 4.0
+
+concentration:
+  single_name_limit: 0.05
+  sector_limit: 0.25

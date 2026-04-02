@@ -1,0 +1,21 @@
+app:
+  name: "Enterprise Agentic Orchestrator"
+  version: "1.0.0"
+  log_level: "INFO"
+
+providers:
+  weaviate_url: "http://localhost:8080"
+  weaviate_grpc_port: 50051
+  embedding_model: "text-embedding-3-small"
+  embedding_dimensions: 1536
+
+observability:
+  langfuse_enabled: true
+  trace_all_requests: true
+  cost_attribution: true
+
+processing:
+  max_concurrent_requests: 5
+  request_timeout_seconds: 300
+  llm_retry_attempts: 3
+  llm_retry_backoff_seconds: 2

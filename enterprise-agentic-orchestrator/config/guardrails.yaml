@@ -1,0 +1,55 @@
+grounding:
+  threshold: 0.7
+  max_retries: 2
+  ungrounded_claim_limit: 0.2
+
+pii:
+  enabled: true
+  patterns:
+    - name: "NI Number"
+      regex: "[A-CEGHJ-PR-TW-Z]{2}\\d{6}[A-D]"
+    - name: "Sort Code"
+      regex: "\\d{2}-\\d{2}-\\d{2}"
+    - name: "Bank Account"
+      regex: "\\d{8}"
+    - name: "Date of Birth"
+      regex: "\\d{2}/\\d{2}/\\d{4}"
+    - name: "Phone UK"
+      regex: "(?:0|\\+44)\\d{10,11}"
+    - name: "Email"
+      regex: "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+  redaction_char: "*"
+
+bias:
+  enabled: true
+  protected_characteristics:
+    - "age"
+    - "gender"
+    - "race"
+    - "ethnicity"
+    - "religion"
+    - "disability"
+    - "sexual orientation"
+    - "marital status"
+    - "pregnancy"
+  proxy_variables:
+    - "postcode"
+    - "first name"
+    - "school attended"
+    - "accent"
+    - "nationality"
+
+escalation:
+  triggers:
+    - name: "high_value_loan"
+      condition: "loan_amount > 500000"
+    - name: "deteriorating_sector"
+      condition: "sector_outlook == 'deteriorating'"
+    - name: "compliance_failure"
+      condition: "compliance_overall_passed == false"
+    - name: "low_reviewer_confidence"
+      condition: "reviewer_confidence < 0.5"
+    - name: "grounding_failure"
+      condition: "grounding_retries_exhausted == true"
+    - name: "low_average_grounding"
+      condition: "average_grounding_score < 0.75"
