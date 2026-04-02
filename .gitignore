@@ -27,6 +27,9 @@ Thumbs.db
 CLAUDE.md
 CLAUDE.local.md
 
+# Planning
+.planning/
+
 # Data
 *.db
 *.sqlite
