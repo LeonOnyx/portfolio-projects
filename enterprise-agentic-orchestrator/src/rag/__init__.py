@@ -6,6 +6,13 @@ Re-exports core functions for convenient access via
 
 from src.rag.chunking import chunk_document
 from src.rag.embeddings import embed_texts
+from src.rag.ingestion import (
+    ingest_all,
+    ingest_financial_documents,
+    ingest_historical_decisions,
+    ingest_regulatory_policies,
+    ingest_sector_analyses,
+)
 from src.rag.retrieval import (
     hybrid_search,
     search_financial_documents,
@@ -25,6 +32,11 @@ from src.rag.schemas import (
 __all__ = [
     "chunk_document",
     "embed_texts",
+    "ingest_all",
+    "ingest_financial_documents",
+    "ingest_historical_decisions",
+    "ingest_regulatory_policies",
+    "ingest_sector_analyses",
     "hybrid_search",
     "search_financial_documents",
     "search_historical_decisions",
