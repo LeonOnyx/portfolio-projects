@@ -417,3 +417,113 @@ def get_reviewer_tools() -> list[BaseTool]:
         RiskCalculatorTool(),
         StressTesterTool(),
     ]
+
+
+# ===========================================================================
+# AutoGen FunctionTool adapters (for ComplianceAgent)
+# ===========================================================================
+
+
+def _rag_policy_lookup_for_autogen(
+    query: str,
+    policy_area: str = "",
+) -> str:
+    """Search regulatory policy documents for compliance verification.
+
+    Queries the RAG knowledge base for FCA, PRA, and CRR regulatory
+    guidance relevant to UK lending compliance checks.
+
+    Args:
+        query: Natural-language search query about regulations.
+        policy_area: Optional policy area filter (e.g. 'Consumer Duty',
+            'Capital Requirements'). Pass empty string for no filter.
+
+    Returns:
+        JSON string with matching regulatory policy documents and citations.
+    """
+    from src.tools.rag_tools import rag_policy_lookup
+
+    result = rag_policy_lookup(
+        query=query,
+        policy_area=policy_area if policy_area else None,
+    )
+    return json.dumps(result, default=str)
+
+
+def _concentration_checker_for_autogen(
+    loan_amount: float,
+    borrower_name: str,
+    sector: str,
+    portfolio_total: float,
+    existing_exposures_by_name_json: str,
+    existing_exposures_by_sector_json: str,
+) -> str:
+    """Check portfolio concentration limits against regulatory thresholds.
+
+    Validates single-name and sector exposure percentages including the
+    proposed loan against CRR Article 395 / Large Exposures limits.
+
+    Args:
+        loan_amount: Proposed loan amount as a number.
+        borrower_name: Name of the borrower.
+        sector: Business sector of the borrower.
+        portfolio_total: Current total portfolio value before this loan.
+        existing_exposures_by_name_json: JSON string mapping borrower names
+            to their current exposure amounts, e.g. '{"Acme Ltd": 500000}'.
+        existing_exposures_by_sector_json: JSON string mapping sectors to
+            their current exposure amounts, e.g. '{"Technology": 2000000}'.
+
+    Returns:
+        JSON string with exposure percentages and breach flags.
+    """
+    from decimal import Decimal
+
+    from src.tools.concentration_checker import check_concentration
+
+    exposures_by_name = {
+        k: Decimal(str(v))
+        for k, v in json.loads(existing_exposures_by_name_json).items()
+    }
+    exposures_by_sector = {
+        k: Decimal(str(v))
+        for k, v in json.loads(existing_exposures_by_sector_json).items()
+    }
+
+    result = check_concentration(
+        loan_amount=Decimal(str(loan_amount)),
+        borrower_name=borrower_name,
+        sector=sector,
+        portfolio_total=Decimal(str(portfolio_total)),
+        existing_exposures_by_name=exposures_by_name,
+        existing_exposures_by_sector=exposures_by_sector,
+    )
+    return json.dumps(result.model_dump(mode="json"), default=str)
+
+
+def get_compliance_tools_autogen() -> list:
+    """Return AutoGen-compatible FunctionTool instances for the compliance agent.
+
+    Tools: rag_policy_lookup (regulatory policy search),
+    concentration_checker (portfolio limit validation).
+
+    All AutoGen imports are lazy (inside this function body) to avoid
+    requiring autogen packages at module-level import time.
+    """
+    from autogen_core.tools import FunctionTool
+
+    return [
+        FunctionTool(
+            _rag_policy_lookup_for_autogen,
+            description=(
+                "Search regulatory policies, FCA/PRA guidance, and CRR "
+                "requirements in the knowledge base"
+            ),
+        ),
+        FunctionTool(
+            _concentration_checker_for_autogen,
+            description=(
+                "Check portfolio concentration limits against regulatory "
+                "thresholds (CRR Article 395 / Large Exposures)"
+            ),
+        ),
+    ]
