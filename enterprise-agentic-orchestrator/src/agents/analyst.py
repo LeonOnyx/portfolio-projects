@@ -39,7 +39,8 @@ MANDATORY RULES — violations will cause your output to be rejected:
    source_citation entry.
 
 3. PROTECTED CHARACTERISTICS: You MUST NOT use or reference protected
-   characteristics in your analysis: age, gender, ethnicity, religion,
+   characteristics in your analysis.  The following are protected characteristics
+   and must never influence your assessment: age, gender, ethnicity, religion,
    disability, sexual orientation, marital status, or pregnancy.
 
 4. OUTPUT FORMAT: Your output MUST be valid JSON conforming to the
@@ -121,11 +122,19 @@ class AnalystAgent(BaseAgent):
             framework="crewai",
             config=config,
         )
-        self.llm = LLM(
-            model=config.get("model", "azure/gpt-4"),
-            temperature=0.1,
-            max_tokens=4000,
-        )
+        # LLM created lazily in _get_llm() so instantiation does not
+        # require provider SDKs (e.g. azure-ai-inference) at import time.
+        self._llm: LLM | None = None
+
+    def _get_llm(self) -> LLM:
+        """Lazily create the LLM instance on first use."""
+        if self._llm is None:
+            self._llm = LLM(
+                model=self.config.get("model", "azure/gpt-4"),
+                temperature=0.1,
+                max_tokens=4000,
+            )
+        return self._llm
 
     async def execute(
         self, context: dict, tools: list | None = None
@@ -162,7 +171,7 @@ class AnalystAgent(BaseAgent):
                 "from your analytical tools and data sources."
             ),
             tools=tools,
-            llm=self.llm,
+            llm=self._get_llm(),
             max_iter=5,  # AGNT-01: may be tight for complex applications
             verbose=self.config.get("verbose", False),
             allow_delegation=False,
