@@ -1,15 +1,18 @@
-"""Agents package -- base classes, tool adapters, and factory functions.
+"""Agents package -- base classes, tool adapters, agents, and factory functions.
 
-Re-exports core agent abstractions and CrewAI tool-set factories for
-convenient single-import access throughout the orchestrator.
+Re-exports core agent abstractions, concrete agent implementations, and
+CrewAI tool-set factories for convenient single-import access throughout
+the orchestrator.
 """
 
+from src.agents.analyst import AnalystAgent
 from src.agents.base import AgentResponse, BaseAgent
 from src.agents.tools_adapter import get_analyst_tools, get_reviewer_tools
 
 __all__ = [
     "BaseAgent",
     "AgentResponse",
+    "AnalystAgent",
     "get_analyst_tools",
     "get_reviewer_tools",
 ]
