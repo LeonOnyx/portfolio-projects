@@ -412,3 +412,264 @@ async def compliance_node(state: dict) -> dict:
             ],
             "current_stage": WorkflowStage.COMPLIANCE.value,
         }
+
+
+# ===========================================================================
+# Grounding adapter nodes (bridge OrchestratorState <-> GroundingCheckpointNode)
+# ===========================================================================
+#
+# Interface mismatch the adapters bridge
+# --------------------------------------
+# GroundingCheckpointNode expects (per grounding_node.py::__call__):
+#     state["agent_output"]       : str
+#     state["source_documents"]   : list
+#
+# OrchestratorState stores agent outputs as dicts under:
+#     state["analysis_result"]    : dict   (AnalysisReport)
+#     state["review_result"]      : dict   (ReviewReport)
+#     state["compliance_result"]  : dict   (ComplianceReport)
+# and retrieved documents under:
+#     state["retrieved_documents"] : list
+#
+# Each adapter extracts the relevant result dict, serialises it to JSON
+# (so GroundingChecker has text to score against sources), builds a
+# private dict matching GroundingCheckpointNode's expected shape, calls
+# the checkpoint, and translates the result back to OrchestratorState
+# fields (``grounding_scores`` / ``audit_trail``).
+#
+# All three adapters share ``_run_grounding_adapter`` to guarantee
+# consistent circuit-breaker and error-handling behaviour.
+
+
+async def _run_grounding_adapter(
+    state: dict,
+    checkpoint_name: str,
+    result_field: str,
+    stage: str,
+) -> dict:
+    """Shared adapter logic for every grounding checkpoint node.
+
+    Parameters
+    ----------
+    state:
+        The current OrchestratorState.
+    checkpoint_name:
+        One of ``"post_analyst"``, ``"post_reviewer"``, ``"post_compliance"``
+        -- the key used by :func:`create_grounding_checkpoints`.
+    result_field:
+        The OrchestratorState field containing the agent output dict
+        to verify (``"analysis_result"`` / ``"review_result"`` /
+        ``"compliance_result"``).
+    stage:
+        The :class:`WorkflowStage` string value to record against
+        the audit entry.
+
+    Returns
+    -------
+    dict
+        Partial state delta with ``current_stage``, ``grounding_scores``
+        (flat list with a single dict -- the reducer will append it),
+        and ``audit_trail``.
+
+    Notes
+    -----
+    Implements the ORCH-06 circuit breaker. Before calling the grounding
+    checkpoint we check whether the breaker is open for this checkpoint
+    name -- if so we short-circuit with a zero-score result flagged
+    ``circuit_broken=True`` and skip the Weaviate / embedding call
+    entirely. Every successful call resets the per-checkpoint failure
+    counter; every exception increments it, tripping the breaker once
+    the threshold is reached.
+    """
+    logger.info(
+        "grounding adapter '%s': entering (result_field=%s)",
+        checkpoint_name,
+        result_field,
+    )
+
+    # -- Fast path: breaker already tripped -------------------------------
+    if _circuit_breaker_is_open(checkpoint_name):
+        logger.warning(
+            "grounding adapter '%s': circuit breaker OPEN -- returning "
+            "zero-score without calling vector DB",
+            checkpoint_name,
+        )
+        return {
+            "current_stage": stage,
+            "grounding_scores": [
+                {
+                    "checkpoint": checkpoint_name,
+                    "score": 0.0,
+                    "is_grounded": False,
+                    "circuit_broken": True,
+                    "error": (
+                        f"Circuit breaker open after "
+                        f"{_CIRCUIT_BREAKER_THRESHOLD} consecutive failures"
+                    ),
+                }
+            ],
+            "audit_trail": [
+                {
+                    "stage": stage,
+                    "action": "grounding_check",
+                    "details": {
+                        "checkpoint": checkpoint_name,
+                        "score": 0.0,
+                        "circuit_broken": True,
+                    },
+                }
+            ],
+        }
+
+    # -- Normal path: call the grounding checkpoint -----------------------
+    try:
+        nodes = _get_grounding_nodes()
+        grounding_node = nodes[checkpoint_name]
+
+        # Serialise the agent output dict to JSON so GroundingChecker
+        # has text to split into claims and embed.
+        output_dict = state.get(result_field, {}) or {}
+        output_text = json.dumps(output_dict, default=str)
+        sources = state.get("retrieved_documents", []) or []
+
+        adapter_dict: dict = {
+            "agent_output": output_text,
+            "source_documents": sources,
+        }
+
+        # GroundingCheckpointNode returns the same dict enriched with
+        # ``grounding_results[checkpoint_name]`` and possibly
+        # ``needs_reprompt``.
+        result = await grounding_node(adapter_dict)
+
+        result_data = (
+            result.get("grounding_results", {}).get(checkpoint_name, {}) or {}
+        )
+        # GroundingResult.model_dump uses the field name ``grounding_score``
+        # (see src/models/governance.py) -- fall back to ``score`` for
+        # forward compatibility with any alternative serialisation shape.
+        grounding_score = result_data.get(
+            "grounding_score", result_data.get("score", 0.0)
+        )
+        is_grounded = result_data.get("is_grounded", False)
+
+        # Success -- reset the per-checkpoint failure counter
+        _circuit_breaker_record_success(checkpoint_name)
+
+        logger.info(
+            "grounding adapter '%s': score=%.2f is_grounded=%s",
+            checkpoint_name,
+            grounding_score,
+            is_grounded,
+        )
+
+        return {
+            "current_stage": stage,
+            "grounding_scores": [
+                {
+                    "checkpoint": checkpoint_name,
+                    "score": grounding_score,
+                    "is_grounded": is_grounded,
+                }
+            ],
+            "audit_trail": [
+                {
+                    "stage": stage,
+                    "action": "grounding_check",
+                    "details": {
+                        "checkpoint": checkpoint_name,
+                        "score": grounding_score,
+                        "is_grounded": is_grounded,
+                    },
+                }
+            ],
+        }
+
+    except Exception as exc:
+        logger.error(
+            "grounding adapter '%s' failed: %s",
+            checkpoint_name,
+            exc,
+            exc_info=True,
+        )
+
+        # Record failure; may trip the breaker.
+        circuit_broken = _circuit_breaker_record_failure(checkpoint_name)
+        if circuit_broken:
+            logger.warning(
+                "grounding adapter '%s': circuit breaker TRIPPED after "
+                "%d consecutive failures",
+                checkpoint_name,
+                _CIRCUIT_BREAKER_THRESHOLD,
+            )
+
+        return {
+            "current_stage": stage,
+            "grounding_scores": [
+                {
+                    "checkpoint": checkpoint_name,
+                    "score": 0.0,
+                    "is_grounded": False,
+                    "error": str(exc),
+                    "circuit_broken": circuit_broken,
+                }
+            ],
+            "audit_trail": [
+                {
+                    "stage": stage,
+                    "action": "grounding_check",
+                    "details": {
+                        "checkpoint": checkpoint_name,
+                        "score": 0.0,
+                        "error": str(exc),
+                        "circuit_broken": circuit_broken,
+                    },
+                }
+            ],
+        }
+
+
+async def grounding_analysis_node(state: dict) -> dict:
+    """Grounding checkpoint after the AnalystAgent (``post_analyst``).
+
+    Verifies the analyst report's factual claims against the documents
+    retrieved so far. On vector-DB failure records a failure with the
+    ORCH-06 circuit breaker and returns a zero-score delta.
+    """
+    return await _run_grounding_adapter(
+        state,
+        checkpoint_name="post_analyst",
+        result_field="analysis_result",
+        stage=WorkflowStage.GROUNDING_ANALYSIS.value,
+    )
+
+
+async def grounding_review_node(state: dict) -> dict:
+    """Grounding checkpoint after the ReviewerAgent (``post_reviewer``).
+
+    Verifies the reviewer report's factual claims against the accumulated
+    retrieved documents. On vector-DB failure records a failure with the
+    ORCH-06 circuit breaker and returns a zero-score delta.
+    """
+    return await _run_grounding_adapter(
+        state,
+        checkpoint_name="post_reviewer",
+        result_field="review_result",
+        stage=WorkflowStage.GROUNDING_REVIEW.value,
+    )
+
+
+async def grounding_compliance_node(state: dict) -> dict:
+    """Grounding checkpoint after the ComplianceAgent (``post_compliance``).
+
+    Verifies the compliance report's regulatory citations against the
+    accumulated retrieved documents. On vector-DB failure records a
+    failure with the ORCH-06 circuit breaker and returns a zero-score
+    delta.
+    """
+    return await _run_grounding_adapter(
+        state,
+        checkpoint_name="post_compliance",
+        result_field="compliance_result",
+        stage=WorkflowStage.GROUNDING_COMPLIANCE.value,
+    )
