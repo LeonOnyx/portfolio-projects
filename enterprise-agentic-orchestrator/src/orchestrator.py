@@ -20,11 +20,27 @@ Phase 7 (ORCH-01 through ORCH-06).
 from __future__ import annotations
 
 import logging
+import os
+import sys
+from uuid import uuid4
 
-from langgraph.graph import END, START, StateGraph
+# ---------------------------------------------------------------------------
+# Path shim: when this module is run as a script (``python src/orchestrator.py``)
+# Python sets sys.path[0] to the script's directory (``src/``), so the
+# absolute imports below (``from src.orchestrator_decision import ...``)
+# would fail. Insert the project root onto sys.path before any first-party
+# imports happen. Imported as a module (``import src.orchestrator``), the
+# package is already resolvable, so the second insert is a no-op against the
+# existing sys.path entries -- no risk of duplicate / shadowing.
+# ---------------------------------------------------------------------------
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
-from src.orchestrator_decision import decision_node, escalation_node
-from src.orchestrator_nodes import (
+from langgraph.graph import END, START, StateGraph  # noqa: E402
+
+from src.orchestrator_decision import decision_node, escalation_node  # noqa: E402
+from src.orchestrator_nodes import (  # noqa: E402
     analysis_node,
     compliance_node,
     grounding_analysis_node,
@@ -33,7 +49,7 @@ from src.orchestrator_nodes import (
     intake_node,
     review_node,
 )
-from src.state import OrchestratorState, WorkflowStage
+from src.state import OrchestratorState, WorkflowStage  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -459,3 +475,166 @@ class CreditRiskOrchestrator:
                     exc,
                 )
                 return None
+
+    # ------------------------------------------------------------------
+    # Public async entry point
+    # ------------------------------------------------------------------
+
+    async def run(
+        self,
+        application: dict,
+        request_id: str | None = None,
+        user_role: str = "default",
+    ) -> dict:
+        """Execute the full credit-risk pipeline for one loan application.
+
+        This is the **sole** async entry point on the orchestrator. The
+        Phase 8 API layer is expected to call ``await orch.run(app_dict)``
+        and treat the returned dict as the final state.
+
+        Parameters
+        ----------
+        application:
+            JSON-serialisable LoanApplication dict (the same shape that
+            ``LoanApplication.model_dump(mode="json")`` produces). Validation
+            happens inside :func:`intake_node`; an invalid payload routes
+            the request to the escalation node rather than raising.
+        request_id:
+            Optional caller-supplied request id. A UUID4 is generated when
+            omitted so every run is uniquely traceable in logs / audit.
+        user_role:
+            The role of the requesting user (used downstream for RLS /
+            permission decisions). Defaults to ``"default"``.
+
+        Returns
+        -------
+        dict
+            The final LangGraph state dict containing (typically)
+            ``final_decision``, ``confidence_score``, ``reasoning_trace``,
+            ``audit_trail``, ``grounding_scores``, ``errors`` and
+            ``current_stage``. On unhandled exception a partial dict with
+            ``final_decision="ERROR"`` is returned -- this method **never**
+            raises so that the API layer always has a dict to serialise.
+        """
+        request_id = request_id or str(uuid4())
+
+        initial_state: dict = {
+            "request_id": request_id,
+            "application": application,
+            "user_role": user_role,
+            "current_stage": WorkflowStage.INTAKE.value,
+            "audit_trail": [],
+            "grounding_scores": [],
+            "errors": [],
+            "retrieved_documents": [],
+            "pii_detected": False,
+            "requires_escalation": False,
+            "final_decision": "",
+            "confidence_score": 0.0,
+            "reasoning_trace": "",
+        }
+
+        logger.info(
+            "Starting credit risk assessment for request %s", request_id
+        )
+
+        try:
+            result = await self._compiled.ainvoke(initial_state)
+            logger.info(
+                "Assessment complete for %s: %s (confidence: %.2f)",
+                request_id,
+                result.get("final_decision"),
+                result.get("confidence_score", 0.0) or 0.0,
+            )
+            return result
+
+        except Exception as exc:
+            # Never raise out of run() -- the Phase 8 API layer depends on
+            # always receiving a dict (which it can serialise to JSON and
+            # return as a 5xx with structured error context).
+            logger.exception(
+                "CreditRiskOrchestrator.run failed for request %s: %s",
+                request_id,
+                exc,
+            )
+            return {
+                "request_id": request_id,
+                "current_stage": "error",
+                "final_decision": "ERROR",
+                "confidence_score": 0.0,
+                "reasoning_trace": (
+                    f"Orchestrator failed before completion: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                "errors": [
+                    {
+                        "stage": "orchestrator",
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    }
+                ],
+                "audit_trail": [],
+                "grounding_scores": [],
+                "retrieved_documents": [],
+                "pii_detected": False,
+                "requires_escalation": True,
+            }
+
+
+# ===========================================================================
+# __main__ smoke test
+# ===========================================================================
+
+if __name__ == "__main__":
+    import logging as _logging
+
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+
+    # Minimal mock application -- only used to demonstrate that the
+    # orchestrator can be constructed without contacting any external
+    # service. We do NOT call orch.run() here because that would require
+    # a live LLM provider (Azure OpenAI) and a running Weaviate instance.
+    mock_app = {
+        "application_id": "TEST-001",
+        "applicant": {
+            "company_name": "Test Corp Ltd",
+            "company_number": "12345678",
+            "sector": "technology",
+            "years_trading": 5,
+            "employee_count": 50,
+            "contact_name": "Jane Smith",
+            "contact_role": "Director",
+        },
+        "loan": {
+            "amount_requested": 250000.00,
+            "term_months": 36,
+            "purpose": "Working capital expansion and equipment purchase",
+            "security_type": "unsecured",
+            "currency": "GBP",
+        },
+        "financials": [
+            {
+                "year": 2025,
+                "revenue": 1500000.00,
+                "gross_profit": 600000.00,
+                "net_profit": 150000.00,
+                "total_assets": 800000.00,
+                "total_liabilities": 300000.00,
+                "cash_balance": 200000.00,
+            }
+        ],
+        "credit_score": 72,
+        "ccj_count": 0,
+    }
+
+    orch = CreditRiskOrchestrator()
+    print("Orchestrator compiled successfully.")
+    print(f"Registered nodes: {sorted(orch.graph.nodes.keys())}")
+    print("Ready to process applications via: await orch.run(application_dict)")
+    print(
+        "(Full pipeline execution requires LLM providers and Weaviate -- "
+        "this smoke test only validates graph compilation and structure.)"
+    )
