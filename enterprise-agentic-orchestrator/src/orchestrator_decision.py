@@ -402,3 +402,379 @@ def check_escalation_triggers(state: dict) -> list[str]:
             reasons.append(message)
 
     return reasons
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for node functions
+# ---------------------------------------------------------------------------
+
+def _clamp_unit(value: float) -> float:
+    """Clamp *value* to the closed interval [0.0, 1.0]."""
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return float(value)
+
+
+def _compute_confidence(
+    analysis_result: dict,
+    review_result: dict,
+    compliance_result: dict,
+    grounding_scores: list,
+) -> float:
+    """Compute the final decision confidence as an average of four signals.
+
+    The four signals -- analyst credit score (normalised to [0,1]), reviewer
+    quality score, compliance pass indicator and average grounding score --
+    are averaged with equal weight and clamped to [0.0, 1.0]. Missing or
+    malformed signals fall back to a neutral value of 0.5 so one bad field
+    cannot drive the confidence to zero.
+    """
+    signals: list[float] = []
+
+    # Analyst credit score (0-100 on the Pydantic model) -> [0,1]
+    try:
+        credit_score = float(analysis_result.get("credit_score", 50))
+        signals.append(_clamp_unit(credit_score / 100.0))
+    except (TypeError, ValueError):
+        signals.append(0.5)
+
+    # Reviewer quality score (already 0-1)
+    try:
+        quality = float(review_result.get("quality_score", 0.5))
+        signals.append(_clamp_unit(quality))
+    except (TypeError, ValueError):
+        signals.append(0.5)
+
+    # Compliance pass -> 1.0 / 0.0
+    try:
+        passed = bool(compliance_result.get("overall_passed", False))
+        signals.append(1.0 if passed else 0.0)
+    except (TypeError, ValueError):
+        signals.append(0.0)
+
+    # Average grounding score across all checkpoint entries
+    try:
+        if isinstance(grounding_scores, list) and grounding_scores:
+            numeric = [
+                s for s in (_score_from_entry(e) for e in grounding_scores)
+                if s is not None
+            ]
+            if numeric:
+                signals.append(_clamp_unit(sum(numeric) / len(numeric)))
+            else:
+                signals.append(0.5)
+        else:
+            signals.append(0.5)
+    except (TypeError, ZeroDivisionError):
+        signals.append(0.5)
+
+    if not signals:
+        return 0.0
+    return _clamp_unit(sum(signals) / len(signals))
+
+
+# ---------------------------------------------------------------------------
+# LangGraph node: decision_node
+# ---------------------------------------------------------------------------
+
+async def decision_node(state: dict) -> dict:
+    """Synthesise all agent outputs into the final lending Decision.
+
+    This node is the deterministic end-of-pipeline synthesiser. It:
+
+    1. Pulls the analyst, reviewer and compliance results from state.
+    2. Runs the outputs through :func:`apply_decision_matrix` to obtain
+       an initial outcome.
+    3. Evaluates all escalation triggers (ORCH-05). If any fire, the
+       outcome is overridden to ``"ESCALATED"`` and the
+       ``requires_escalation`` flag is set.
+    4. Computes a bounded confidence score averaged across four signals
+       (analyst credit score, reviewer quality score, compliance pass
+       and average grounding score).
+    5. Builds a human-readable reasoning trace suitable for the audit
+       trail and for regulator review.
+    6. Creates a :class:`~src.models.reports.Decision` Pydantic model
+       to validate the outcome and confidence against their enum / range
+       constraints.
+    7. Emits two or three audit entries (matrix applied, decision
+       rendered and -- if escalated -- escalation triggered).
+
+    The function returns a **partial dict delta** and never mutates the
+    incoming state. Any exception inside the body is caught and turned
+    into an error delta so a downstream LangGraph node can route to the
+    escalation path instead of the workflow blowing up mid-run.
+
+    Parameters
+    ----------
+    state:
+        The current LangGraph state dict.
+
+    Returns
+    -------
+    dict
+        Partial state delta with ``final_decision``, ``confidence_score``,
+        ``reasoning_trace``, ``requires_escalation``, ``current_stage``
+        and ``audit_trail`` (list, consumed by the reducer in state.py).
+    """
+    # Lazy imports to keep module import cost minimal and avoid
+    # circular dependencies during package init.
+    from src.models.reports import Decision, DecisionOutcome
+    from src.state import WorkflowStage
+
+    try:
+        # --- 1. Extract agent outputs ------------------------------------
+        analysis_result: dict = state.get("analysis_result") or {}
+        review_result: dict = state.get("review_result") or {}
+        compliance_result: dict = state.get("compliance_result") or {}
+        grounding_scores: list = state.get("grounding_scores") or []
+
+        # --- 2. Matrix inputs --------------------------------------------
+        analyst_recommendation = analysis_result.get(
+            "recommendation", "REFER_TO_UNDERWRITER"
+        )
+        reviewer_agrees = bool(review_result.get("agrees_with_analyst", False))
+        compliance_passed = bool(
+            compliance_result.get("overall_passed", False)
+        )
+
+        # --- 3. Apply the deterministic decision matrix ------------------
+        outcome = apply_decision_matrix(
+            analyst_recommendation=analyst_recommendation,
+            reviewer_agrees=reviewer_agrees,
+            compliance_passed=compliance_passed,
+        )
+
+        # --- 4. Escalation override --------------------------------------
+        triggers = check_escalation_triggers(state)
+        requires_escalation = bool(triggers)
+        if requires_escalation:
+            outcome = DecisionOutcome.ESCALATED.value
+
+        # --- 5. Confidence -----------------------------------------------
+        confidence = _compute_confidence(
+            analysis_result=analysis_result,
+            review_result=review_result,
+            compliance_result=compliance_result,
+            grounding_scores=grounding_scores,
+        )
+
+        # --- 6. Reasoning trace ------------------------------------------
+        if triggers:
+            trigger_fragment = "Escalation triggers: " + ", ".join(triggers)
+        else:
+            trigger_fragment = "No escalation triggers."
+        reasoning_trace = (
+            f"Analyst recommendation: {analyst_recommendation}. "
+            f"Reviewer agrees: {reviewer_agrees}. "
+            f"Compliance passed: {compliance_passed}. "
+            f"Decision: {outcome}. "
+            f"Confidence: {confidence:.2f}. "
+            f"{trigger_fragment}"
+        )
+
+        # --- 7. Create validated Decision model --------------------------
+        application_id = (
+            state.get("application", {}).get("application_id", "unknown")
+        )
+        decision = Decision(
+            application_id=application_id,
+            outcome=DecisionOutcome(outcome),
+            reasoning=reasoning_trace,
+            confidence_score=confidence,
+            conditions=list(triggers) if triggers else [],
+        )
+
+        # --- 8. Build audit entries --------------------------------------
+        audit_entries: list[dict] = []
+
+        audit_entries.append(
+            {
+                "stage": WorkflowStage.DECISION.value,
+                "action": "matrix_applied",
+                "details": {
+                    "recommendation": analyst_recommendation,
+                    "reviewer_agrees": reviewer_agrees,
+                    "compliance_passed": compliance_passed,
+                    "outcome": outcome,
+                },
+            }
+        )
+        audit_entries.append(
+            {
+                "stage": WorkflowStage.DECISION.value,
+                "action": "decision_rendered",
+                "details": {
+                    "decision_id": decision.decision_id,
+                    "application_id": application_id,
+                    "outcome": outcome,
+                    "confidence": confidence,
+                },
+            }
+        )
+        if requires_escalation:
+            audit_entries.append(
+                {
+                    "stage": WorkflowStage.DECISION.value,
+                    "action": "escalation_triggered",
+                    "details": {"triggers": list(triggers)},
+                }
+            )
+
+        logger.info(
+            "decision_node: application_id=%s outcome=%s confidence=%.2f "
+            "triggers=%d",
+            application_id,
+            outcome,
+            confidence,
+            len(triggers),
+        )
+
+        # --- 9. Return partial delta -------------------------------------
+        next_stage = (
+            WorkflowStage.ESCALATE.value
+            if requires_escalation
+            else WorkflowStage.DECISION.value
+        )
+        return {
+            "final_decision": outcome,
+            "confidence_score": confidence,
+            "reasoning_trace": reasoning_trace,
+            "requires_escalation": requires_escalation,
+            "current_stage": next_stage,
+            "audit_trail": audit_entries,
+        }
+
+    except Exception as exc:
+        logger.exception("decision_node: unhandled error: %s", exc)
+        return {
+            "final_decision": "ERROR",
+            "requires_escalation": True,
+            "current_stage": WorkflowStage.ESCALATE.value,
+            "errors": [f"decision_node: {type(exc).__name__}: {exc}"],
+            "audit_trail": [
+                {
+                    "stage": WorkflowStage.DECISION.value,
+                    "action": "decision_node_error",
+                    "details": {
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    },
+                }
+            ],
+        }
+
+
+# ---------------------------------------------------------------------------
+# LangGraph node: escalation_node
+# ---------------------------------------------------------------------------
+
+async def escalation_node(state: dict) -> dict:
+    """Terminal node that routes a request to human review.
+
+    This node is invoked when ``decision_node`` (or any upstream node)
+    flags the request for escalation. It collects every available
+    escalation reason -- the pre-computed ``requires_escalation`` flag,
+    any accumulated errors and a fresh re-run of
+    :func:`check_escalation_triggers` as a belt-and-braces safety net --
+    assembles a human-readable summary and emits a single audit entry.
+
+    Like ``decision_node``, this function returns a partial dict delta
+    and never mutates the incoming state. It is the terminal node of the
+    escalation path in the LangGraph, so its return value is the final
+    state observed by the caller.
+
+    Parameters
+    ----------
+    state:
+        The current LangGraph state dict at the point of escalation.
+
+    Returns
+    -------
+    dict
+        Partial delta setting ``current_stage=ESCALATE``,
+        ``requires_escalation=True``, ``final_decision="ESCALATED"``,
+        a reasoning_trace summary and one audit entry.
+    """
+    from src.state import WorkflowStage
+
+    try:
+        reasons: list[str] = []
+
+        # Flag from an upstream node
+        if state.get("requires_escalation"):
+            reasons.append("upstream_flag: requires_escalation=True")
+
+        # Any errors accumulated in the pipeline
+        errors = state.get("errors") or []
+        if isinstance(errors, list):
+            for err in errors:
+                if err:
+                    reasons.append(f"error: {err}")
+
+        # Re-run triggers as a safety net -- cheap and ensures we don't
+        # lose context if decision_node didn't run (e.g. direct routing).
+        try:
+            trigger_reasons = check_escalation_triggers(state)
+        except Exception:  # pragma: no cover -- defensive
+            trigger_reasons = []
+        for tr in trigger_reasons:
+            if tr not in reasons:
+                reasons.append(tr)
+
+        if not reasons:
+            reasons.append("unspecified: escalation node entered without reasons")
+
+        partial_decision = state.get("final_decision")
+        reasoning_trace = (
+            f"Escalated to human review. Reasons: {'; '.join(reasons)}"
+        )
+
+        audit_entry = {
+            "stage": WorkflowStage.ESCALATE.value,
+            "action": "human_review_required",
+            "details": {
+                "reasons": list(reasons),
+                "partial_decision": partial_decision,
+                "application_id": state.get("application", {}).get(
+                    "application_id", "unknown"
+                ),
+            },
+        }
+
+        logger.warning(
+            "escalation_node: routing to human review (%d reasons)",
+            len(reasons),
+        )
+
+        return {
+            "current_stage": WorkflowStage.ESCALATE.value,
+            "requires_escalation": True,
+            "final_decision": "ESCALATED",
+            "reasoning_trace": reasoning_trace,
+            "audit_trail": [audit_entry],
+        }
+
+    except Exception as exc:
+        logger.exception("escalation_node: unhandled error: %s", exc)
+        return {
+            "current_stage": WorkflowStage.ESCALATE.value,
+            "requires_escalation": True,
+            "final_decision": "ESCALATED",
+            "reasoning_trace": (
+                f"Escalated to human review after escalation_node error: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            "errors": [f"escalation_node: {type(exc).__name__}: {exc}"],
+            "audit_trail": [
+                {
+                    "stage": WorkflowStage.ESCALATE.value,
+                    "action": "escalation_node_error",
+                    "details": {
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    },
+                }
+            ],
+        }
