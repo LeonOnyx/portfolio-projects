@@ -68,21 +68,9 @@ setup_instrumentator(app)
 # =====================================================================
 
 from src.api.routes.assess import router as assess_router  # noqa: E402
+from src.api.routes.decisions import router as decisions_router  # noqa: E402
+from src.api.routes.health import router as health_router  # noqa: E402
 
 app.include_router(assess_router)
-
-# decisions and health routers are created in Plan 08-04 -- import with
-# graceful fallback so the app starts with just the assess endpoint.
-try:
-    from src.api.routes.decisions import router as decisions_router  # noqa: E402
-
-    app.include_router(decisions_router)
-except ImportError:
-    logger.info("decisions router not yet available")
-
-try:
-    from src.api.routes.health import router as health_router  # noqa: E402
-
-    app.include_router(health_router)
-except ImportError:
-    logger.info("health router not yet available")
+app.include_router(decisions_router)
+app.include_router(health_router)
