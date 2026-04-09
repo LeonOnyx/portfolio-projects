@@ -157,6 +157,11 @@ class AnalystAgent(BaseAgent):
 
             tools = get_analyst_tools()
 
+        # Lazy import of Langfuse span helpers (graceful degradation: returns None)
+        from src.observability.tracing import create_agent_span, end_agent_span
+
+        langfuse_span = create_agent_span(self.name)
+
         crewai_agent = Agent(
             role="Senior Financial Analyst",
             goal=(
@@ -213,6 +218,12 @@ class AnalystAgent(BaseAgent):
             tokens = 0
 
         latency = (time.perf_counter() - start) * 1000  # ms
+
+        end_agent_span(langfuse_span, {
+            "agent_name": self.name,
+            "tokens_used": tokens,
+            "latency_ms": latency,
+        })
 
         return AgentResponse(
             agent_name=self.name,
