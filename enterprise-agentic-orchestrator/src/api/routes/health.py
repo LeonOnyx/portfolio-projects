@@ -7,6 +7,7 @@
   HTTP-level instrumentation when available).
 """
 
+import asyncio
 import logging
 import os
 
@@ -50,21 +51,28 @@ async def health_check():
     return HealthResponse(status=overall, services=services)
 
 
-async def _check_weaviate() -> dict:
-    """Attempt a local Weaviate connection and readiness check."""
+def _sync_check_weaviate() -> dict:
+    """Synchronous Weaviate probe — run via asyncio.to_thread()."""
     try:
         import weaviate
 
         client = weaviate.connect_to_local()
-        ready = client.is_ready()
-        client.close()
+        try:
+            ready = client.is_ready()
+        finally:
+            client.close()
         return {"status": "healthy" if ready else "unhealthy", "ready": ready}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 
 
-async def _check_llm() -> dict:
-    """Check Azure OpenAI reachability via a lightweight models.list call."""
+async def _check_weaviate() -> dict:
+    """Check Weaviate availability without blocking the event loop."""
+    return await asyncio.to_thread(_sync_check_weaviate)
+
+
+def _sync_check_llm() -> dict:
+    """Synchronous LLM probe — run via asyncio.to_thread()."""
     try:
         endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
         api_key = os.environ.get("AZURE_OPENAI_API_KEY")
@@ -84,6 +92,11 @@ async def _check_llm() -> dict:
         return {"status": "healthy"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
+
+
+async def _check_llm() -> dict:
+    """Check LLM availability without blocking the event loop."""
+    return await asyncio.to_thread(_sync_check_llm)
 
 
 @router.get(

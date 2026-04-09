@@ -35,7 +35,10 @@ async def get_decision(request_id: str, storage=Depends(get_storage)):
     Returns the same shape as :class:`AssessmentResponse` so consumers
     can use a single model for both POST and GET flows.
     """
-    result = await storage.get(request_id)
+    try:
+        result = await storage.get(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request_id format")
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -67,7 +70,10 @@ async def get_explain(request_id: str, storage=Depends(get_storage)):
     grounding scores so consumers can understand *why* the decision
     was made and how well each claim was grounded.
     """
-    result = await storage.get(request_id)
+    try:
+        result = await storage.get(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request_id format")
     if result is None:
         raise HTTPException(
             status_code=404,
@@ -101,7 +107,10 @@ async def get_audit(request_id: str, storage=Depends(get_storage)):
     decision matrix evaluation, etc.) with timestamps and metadata
     for regulatory traceability.
     """
-    result = await storage.get(request_id)
+    try:
+        result = await storage.get(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request_id format")
     if result is None:
         raise HTTPException(
             status_code=404,

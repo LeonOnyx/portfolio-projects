@@ -41,9 +41,11 @@ ASSESSMENT_LATENCY = Histogram(
 def track_assessment_latency():
     """Context manager that observes elapsed time on ASSESSMENT_LATENCY."""
     start = time.monotonic()
-    yield
-    duration = time.monotonic() - start
-    ASSESSMENT_LATENCY.observe(duration)
+    try:
+        yield
+    finally:
+        duration = time.monotonic() - start
+        ASSESSMENT_LATENCY.observe(duration)
 
 
 def record_assessment_metrics(result: dict) -> None:
