@@ -8,6 +8,7 @@ with agree/disagree determination, confidence scoring, and issues found.
 """
 
 import logging
+import re as _re
 import time
 from typing import Any
 
@@ -60,6 +61,22 @@ MANDATORY RULES — violations will cause your output to be rejected:
 8. ERROR HANDLING: If a tool returns an error or no data, state
    "insufficient data" for that aspect rather than guessing.
 """
+
+
+# ---------------------------------------------------------------------------
+# Input sanitization (P1-11 -- prompt injection defence)
+# ---------------------------------------------------------------------------
+
+
+def _sanitize_field(value: str, max_length: int = 500) -> str:
+    """Strip control characters and limit length for safe prompt interpolation."""
+    if not isinstance(value, str):
+        return str(value)[:max_length]
+    # Remove control characters except newline and tab
+    cleaned = _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
+    # Escape sequences that could be interpreted as prompt delimiters
+    cleaned = cleaned.replace("```", "` ` `")
+    return cleaned[:max_length]
 
 
 # ---------------------------------------------------------------------------
@@ -272,16 +289,18 @@ class ReviewerAgent(BaseAgent):
         applicant = app.get("applicant", {})
 
         application_id = app.get("application_id", "unknown")
-        company_name = applicant.get("company_name", "unknown")
-        sector = app.get("sector", "unknown")
+        company_name = _sanitize_field(applicant.get("company_name", "unknown"))
+        sector = _sanitize_field(app.get("sector", "unknown"))
         loan_amount = app.get("loan_amount", "unknown")
         currency = app.get("currency", "GBP")
-        purpose = app.get("purpose", "unknown")
+        purpose = _sanitize_field(app.get("purpose", "unknown"))
         years_trading = app.get("years_trading", "unknown")
 
         # Extract analyst summary for comparison
         analyst_credit_score = analyst_report.get("credit_score", "N/A")
-        analyst_recommendation = analyst_report.get("recommendation", "N/A")
+        analyst_recommendation = _sanitize_field(
+            str(analyst_report.get("recommendation", "N/A"))
+        )
         analyst_pd = "N/A"
         risk_metrics = analyst_report.get("risk_metrics", {})
         if isinstance(risk_metrics, dict):
