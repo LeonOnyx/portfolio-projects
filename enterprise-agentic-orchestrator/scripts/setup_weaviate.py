@@ -46,8 +46,12 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
+    host = os.environ.get("WEAVIATE_HOST", "localhost")
+    port = int(os.environ.get("WEAVIATE_HTTP_PORT", "8080"))
+    grpc_port = int(os.environ.get("WEAVIATE_GRPC_PORT", "50051"))
+
     try:
-        with weaviate.connect_to_local() as client:
+        with weaviate.connect_to_local(host=host, port=port, grpc_port=grpc_port) as client:
             if args.reset:
                 print("Resetting collections...")
                 for name in COLLECTION_NAMES:
@@ -57,19 +61,34 @@ def main() -> None:
                     else:
                         print(f"  Skipped (not found): {name}")
 
-            print("Creating collections...")
-            create_all_collections(client)
+            # Check which collections already exist (idempotent creation)
+            existing = [name for name in COLLECTION_NAMES if client.collections.exists(name)]
+            missing = [name for name in COLLECTION_NAMES if name not in existing]
 
-            # Verify each collection was created
-            created = []
+            if existing and not args.reset:
+                print(f"Collections already exist (skipping): {existing}")
+
+            if missing or args.reset:
+                print("Creating collections...")
+                try:
+                    create_all_collections(client)
+                except Exception as exc:
+                    # Collections may partially exist; log and continue
+                    print(f"  Note: {exc} (some collections may already exist)")
+
+            # Verify each collection exists
+            verified = []
             for name in COLLECTION_NAMES:
-                collection = client.collections.get(name)
-                config = collection.config.get()
-                prop_count = len(config.properties)
-                print(f"  {name}: {prop_count} properties")
-                created.append(name)
+                if client.collections.exists(name):
+                    collection = client.collections.get(name)
+                    config = collection.config.get()
+                    prop_count = len(config.properties)
+                    print(f"  {name}: {prop_count} properties")
+                    verified.append(name)
+                else:
+                    print(f"  WARNING: {name} not found after creation")
 
-            print(f"\nCreated {len(created)} collections: {created}")
+            print(f"\nVerified {len(verified)} collections: {verified}")
 
     except weaviate.exceptions.WeaviateConnectionError:
         print(
