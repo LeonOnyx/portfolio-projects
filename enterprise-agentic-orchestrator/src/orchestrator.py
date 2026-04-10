@@ -485,6 +485,7 @@ class CreditRiskOrchestrator:
         application: dict,
         request_id: str | None = None,
         user_role: str = "default",
+        config: dict | None = None,
     ) -> dict:
         """Execute the full credit-risk pipeline for one loan application.
 
@@ -505,6 +506,11 @@ class CreditRiskOrchestrator:
         user_role:
             The role of the requesting user (used downstream for RLS /
             permission decisions). Defaults to ``"default"``.
+        config:
+            Optional LangGraph config dict forwarded to ``ainvoke()``.
+            Typically carries ``{"callbacks": [langfuse_handler]}`` for
+            Langfuse tracing. Defaults to ``{}`` when omitted -- fully
+            backward-compatible with existing callers.
 
         Returns
         -------
@@ -539,7 +545,9 @@ class CreditRiskOrchestrator:
         )
 
         try:
-            result = await self._compiled.ainvoke(initial_state)
+            result = await self._compiled.ainvoke(
+                initial_state, config=config or {}
+            )
             logger.info(
                 "Assessment complete for %s: %s (confidence: %.2f)",
                 request_id,

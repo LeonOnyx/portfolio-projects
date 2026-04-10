@@ -114,6 +114,7 @@ class ComplianceAgent(BaseAgent):
             AgentResponse with the ComplianceReport as output dict.
         """
         start = time.perf_counter()
+        langfuse_span = None
 
         # Lazy-load default tools only when caller does not supply them
         if tools is None:
@@ -125,6 +126,11 @@ class ComplianceAgent(BaseAgent):
             # Lazy import -- no module-level autogen dependency
             from autogen_agentchat.agents import AssistantAgent
             from autogen_agentchat.messages import StructuredMessage
+
+            # Lazy import of Langfuse span helpers (graceful degradation: returns None)
+            from src.observability.tracing import create_agent_span, end_agent_span
+
+            langfuse_span = create_agent_span(self.name)
 
             # Fresh agent per call to avoid state pollution
             agent = AssistantAgent(
@@ -154,6 +160,12 @@ class ComplianceAgent(BaseAgent):
             # Estimate token usage from model usage metadata
             tokens_used = self._extract_tokens(result)
 
+            end_agent_span(langfuse_span, {
+                "agent_name": self.name,
+                "tokens_used": tokens_used,
+                "latency_ms": latency,
+            })
+
             return AgentResponse(
                 agent_name=self.name,
                 agent_framework=self.framework,
@@ -170,6 +182,18 @@ class ComplianceAgent(BaseAgent):
             logger.error(
                 "[%s] Compliance check failed: %s", self.name, exc, exc_info=True
             )
+            # End Langfuse span on failure (langfuse_span may be None if
+            # exception occurred before span creation -- end_agent_span is a no-op)
+            try:
+                from src.observability.tracing import end_agent_span
+
+                end_agent_span(langfuse_span, {
+                    "agent_name": self.name,
+                    "tokens_used": 0,
+                    "latency_ms": latency,
+                })
+            except Exception:
+                pass  # Never let span cleanup block error handling
             return AgentResponse(
                 agent_name=self.name,
                 agent_framework=self.framework,
