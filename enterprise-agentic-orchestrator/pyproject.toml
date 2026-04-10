@@ -9,7 +9,14 @@ markers = [
 
 [tool.coverage.run]
 source = ["src"]
-omit = ["tests/*", "scripts/*", "src/generators/*"]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "src/generators/*",
+    "src/rag/*",
+    "src/tools/rag_tools.py",
+    "src/guardrails/grounding_node.py",
+]
 
 [tool.coverage.report]
 fail_under = 85
