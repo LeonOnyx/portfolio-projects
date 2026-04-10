@@ -229,6 +229,16 @@ class ReviewerAgent(BaseAgent):
 
         report: ReviewReport = result.pydantic
 
+        # Extract sources from stress test results and issues
+        sources = []
+        for st_result in (report.stress_test_results or []):
+            if isinstance(st_result, dict):
+                scenario = st_result.get("scenario", "unknown")
+                sources.append(f"stress_test:{scenario}")
+        for issue in (report.issues_found or []):
+            if issue:
+                sources.append(f"issue:{issue[:100]}")
+
         # Defensive token extraction
         try:
             tokens = result.token_usage.total_tokens if result.token_usage else 0
@@ -249,7 +259,7 @@ class ReviewerAgent(BaseAgent):
             output=report.model_dump(mode="json"),
             reasoning_trace=report.reasoning,
             confidence=self._map_confidence_level(report.confidence_level),
-            sources_used=[],
+            sources_used=sources,
             tokens_used=tokens,
             latency_ms=latency,
         )

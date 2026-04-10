@@ -197,7 +197,12 @@ class ComplianceAgent(BaseAgent):
             return AgentResponse(
                 agent_name=self.name,
                 agent_framework=self.framework,
-                output={},
+                output={
+                    "application_id": context.get("application", {}).get("application_id", "unknown"),
+                    "checks": [],
+                    "overall_passed": False,
+                    "error": f"Compliance check failed: {type(exc).__name__}: {exc}",
+                },
                 reasoning_trace=f"Error: {exc}",
                 confidence=0.0,
                 sources_used=[],
