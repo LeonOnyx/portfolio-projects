@@ -109,7 +109,7 @@ class TestDependencies:
         original = deps._orchestrator
         deps._orchestrator = None
         try:
-            with pytest.raises(AssertionError, match="not initialised"):
+            with pytest.raises(RuntimeError, match="not initialised"):
                 deps.get_orchestrator()
         finally:
             deps._orchestrator = original
@@ -120,7 +120,7 @@ class TestDependencies:
         original = deps._storage
         deps._storage = None
         try:
-            with pytest.raises(AssertionError, match="not initialised"):
+            with pytest.raises(RuntimeError, match="not initialised"):
                 deps.get_storage()
         finally:
             deps._storage = original
