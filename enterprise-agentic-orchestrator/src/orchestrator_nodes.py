@@ -487,6 +487,11 @@ async def _run_grounding_adapter(
         result_field,
     )
 
+    # Lazy import of Langfuse grounding span helpers (graceful degradation)
+    from src.observability.tracing import create_grounding_span, end_grounding_span
+
+    grounding_span = None
+
     # -- Fast path: breaker already tripped -------------------------------
     if _circuit_breaker_is_open(checkpoint_name):
         logger.warning(
@@ -494,6 +499,8 @@ async def _run_grounding_adapter(
             "zero-score without calling vector DB",
             checkpoint_name,
         )
+        cb_span = create_grounding_span(checkpoint_name)
+        end_grounding_span(cb_span, score=0.0, is_grounded=False, checkpoint_name=checkpoint_name)
         return {
             "current_stage": stage,
             "grounding_scores": [
@@ -523,6 +530,7 @@ async def _run_grounding_adapter(
 
     # -- Normal path: call the grounding checkpoint -----------------------
     try:
+        grounding_span = create_grounding_span(checkpoint_name)
         nodes = _get_grounding_nodes()
         grounding_node = nodes[checkpoint_name]
 
@@ -552,6 +560,8 @@ async def _run_grounding_adapter(
             "grounding_score", result_data.get("score", 0.0)
         )
         is_grounded = result_data.get("is_grounded", False)
+
+        end_grounding_span(grounding_span, score=grounding_score, is_grounded=is_grounded, checkpoint_name=checkpoint_name)
 
         # Success -- reset the per-checkpoint failure counter
         _circuit_breaker_record_success(checkpoint_name)
@@ -592,6 +602,8 @@ async def _run_grounding_adapter(
             exc,
             exc_info=True,
         )
+
+        end_grounding_span(grounding_span, score=0.0, is_grounded=False, checkpoint_name=checkpoint_name)
 
         # Record failure; may trip the breaker.
         circuit_broken = _circuit_breaker_record_failure(checkpoint_name)
