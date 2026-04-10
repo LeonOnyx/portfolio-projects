@@ -136,6 +136,11 @@ def calculate_credit_score(
     cfg = ConfigLoader().scoring().credit_scoring
     weights = cfg.weights
 
+    if not financials:
+        raise ValueError(
+            "calculate_credit_score requires at least one year of financial data"
+        )
+
     # Extract most recent year's financials
     sorted_fins = sorted(financials, key=lambda f: f["year"])
     latest = sorted_fins[-1]

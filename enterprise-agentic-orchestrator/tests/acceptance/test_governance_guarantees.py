@@ -222,10 +222,16 @@ def _build_mock_config_loader():
         "grounding_failure",
         "low_average_grounding",
     ]
+    _thresholds = {
+        "high_value_loan": 500_000,
+        "low_reviewer_confidence": 0.5,
+        "low_average_grounding": 0.75,
+    }
     triggers = []
     for name in trigger_names:
         t = MagicMock()
         t.name = name
+        t.threshold = _thresholds.get(name)
         triggers.append(t)
     guardrails.escalation.triggers = triggers
     guardrails.grounding.max_retries = 2

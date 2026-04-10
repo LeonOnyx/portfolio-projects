@@ -74,8 +74,18 @@ def lookup_sector(sector: str) -> SectorLookupResult:
             error=error_msg,
         )
 
-    # Extract from first result
-    results = result["results"]
+    # Extract from first result (defensive against empty list)
+    results = result.get("results", [])
+    if not results:
+        return SectorLookupResult(
+            sector=sector,
+            outlook="unknown",
+            risk_level="unknown",
+            summary="No sector results available",
+            source_count=0,
+            citations=[],
+            error="Empty results list despite non-zero result_count",
+        )
     first = results[0]
     outlook = first.get("outlook", "unknown") or "unknown"
     risk_level = first.get("risk_level", "unknown") or "unknown"

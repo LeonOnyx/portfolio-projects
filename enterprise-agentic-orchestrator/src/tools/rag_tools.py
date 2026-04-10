@@ -85,7 +85,7 @@ def rag_financial_lookup(
     financial_year: int | None = None,
     company_name: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search financial documents and return structured results with citations.
 
@@ -102,7 +102,7 @@ def rag_financial_lookup(
     limit:
         Maximum number of results (default 5).
     alpha:
-        Hybrid search blend weight (0 = keyword, 1 = vector, 0.5 = balanced).
+        Hybrid search blend weight (0 = keyword, 1 = vector, 0.7 = default).
 
     Returns
     -------
@@ -161,7 +161,7 @@ def rag_sector_analysis(
     query: str,
     sector: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search sector analysis documents and return structured results with citations.
 
@@ -232,7 +232,7 @@ def rag_policy_lookup(
     query: str,
     policy_area: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search regulatory policy documents and return structured results with citations.
 
@@ -303,7 +303,7 @@ def historical_comparator(
     sector: str | None = None,
     performance_outcome: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search historical decisions and return structured results with citations.
 

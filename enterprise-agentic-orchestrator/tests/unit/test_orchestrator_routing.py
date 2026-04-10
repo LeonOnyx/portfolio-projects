@@ -29,6 +29,13 @@ from src.orchestrator_decision import check_escalation_triggers
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_THRESHOLDS: dict[str, float | None] = {
+    "high_value_loan": 500_000,
+    "low_reviewer_confidence": 0.5,
+    "low_average_grounding": 0.75,
+}
+
+
 def _mock_config_with_triggers(trigger_names: list[str], max_retries: int = 2):
     """Return a patch context for ConfigLoader that yields guardrails
     with the specified escalation triggers and grounding.max_retries."""
@@ -37,6 +44,7 @@ def _mock_config_with_triggers(trigger_names: list[str], max_retries: int = 2):
     for name in trigger_names:
         t = MagicMock()
         t.name = name
+        t.threshold = _DEFAULT_THRESHOLDS.get(name)
         triggers.append(t)
 
     guardrails = MagicMock()

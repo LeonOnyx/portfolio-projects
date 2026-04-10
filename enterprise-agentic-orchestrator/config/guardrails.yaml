@@ -42,14 +42,17 @@ bias:
 escalation:
   triggers:
     - name: "high_value_loan"
-      condition: "loan_amount > 500000"
+      condition: "loan_amount > threshold"
+      threshold: 500000
     - name: "deteriorating_sector"
       condition: "sector_outlook == 'deteriorating'"
     - name: "compliance_failure"
       condition: "compliance_overall_passed == false"
     - name: "low_reviewer_confidence"
-      condition: "reviewer_confidence < 0.5"
+      condition: "reviewer_confidence < threshold"
+      threshold: 0.5
     - name: "grounding_failure"
       condition: "grounding_retries_exhausted == true"
     - name: "low_average_grounding"
-      condition: "average_grounding_score < 0.75"
+      condition: "average_grounding_score < threshold"
+      threshold: 0.75
