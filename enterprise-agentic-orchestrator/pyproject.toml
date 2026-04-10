@@ -5,6 +5,7 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "acceptance: Acceptance tests",
+    "rag_smoke: RAG retrieval accuracy tests requiring live Weaviate (run with: pytest -m rag_smoke)",
 ]
 
 [tool.coverage.run]
