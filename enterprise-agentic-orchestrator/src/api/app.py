@@ -51,11 +51,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware -- permissive for demo, tighten for production
+# CORS middleware -- Credentials disabled; wildcard origins are spec-compliant without credentials
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -41,9 +41,10 @@ async def health_check():
     services["llm"] = await _check_llm()
 
     statuses = [s.get("status") for s in services.values()]
-    if all(s == "healthy" for s in statuses):
+    healthy_count = sum(1 for s in statuses if s == "healthy")
+    if healthy_count == len(statuses):
         overall = "healthy"
-    elif any(s == "healthy" for s in statuses):
+    elif healthy_count > 0:
         overall = "degraded"
     else:
         overall = "unhealthy"
