@@ -41,9 +41,10 @@ async def health_check():
     services["llm"] = await _check_llm()
 
     statuses = [s.get("status") for s in services.values()]
-    if all(s == "healthy" for s in statuses):
+    healthy_count = sum(1 for s in statuses if s == "healthy")
+    if healthy_count == len(statuses):
         overall = "healthy"
-    elif any(s == "healthy" for s in statuses):
+    elif healthy_count > 0:
         overall = "degraded"
     else:
         overall = "unhealthy"
@@ -56,7 +57,10 @@ def _sync_check_weaviate() -> dict:
     try:
         import weaviate
 
-        client = weaviate.connect_to_local()
+        host = os.environ.get("WEAVIATE_HOST", "localhost")
+        port = int(os.environ.get("WEAVIATE_HTTP_PORT", "8080"))
+        grpc_port = int(os.environ.get("WEAVIATE_GRPC_PORT", "50051"))
+        client = weaviate.connect_to_local(host=host, port=port, grpc_port=grpc_port)
         try:
             ready = client.is_ready()
         finally:

@@ -121,6 +121,63 @@ def _circuit_breaker_is_open(checkpoint_name: str) -> bool:
 
 
 # ===========================================================================
+# Bias check helper (P1-12 -- post-hoc on agent outputs)
+# ===========================================================================
+
+
+def _run_bias_check(agent_output: dict, stage: str) -> list[dict]:
+    """Run BiasChecker on agent output text, returning audit entries.
+
+    Flags bias indicators in agent reasoning but does NOT block the pipeline.
+    Returns a list of audit entry dicts (possibly empty) for the audit trail.
+    """
+    try:
+        from src.guardrails.bias import BiasChecker
+
+        checker = BiasChecker()
+        # Check the reasoning/text content of the agent output
+        text_to_check = ""
+        for key in ("reasoning", "reasoning_trace", "details", "summary"):
+            val = agent_output.get(key)
+            if isinstance(val, str):
+                text_to_check += " " + val
+
+        if not text_to_check.strip():
+            # Serialize the whole output for checking
+            text_to_check = json.dumps(agent_output, default=str)
+
+        result = checker.check(text_to_check)
+
+        if result.bias_detected:
+            logger.warning(
+                "Bias detected in %s output: %s",
+                stage,
+                result.details,
+            )
+            return [
+                {
+                    "stage": stage,
+                    "action": "bias_check_warning",
+                    "details": {
+                        "bias_detected": True,
+                        "protected_characteristics": result.protected_characteristics_found,
+                        "proxy_variables": result.proxy_variables_found,
+                    },
+                }
+            ]
+        return [
+            {
+                "stage": stage,
+                "action": "bias_check_passed",
+                "details": {"bias_detected": False},
+            }
+        ]
+    except Exception as exc:
+        logger.warning("Bias check failed for %s: %s", stage, exc)
+        return []
+
+
+# ===========================================================================
 # Intake node (ORCH-02)
 # ===========================================================================
 
@@ -251,6 +308,8 @@ async def analysis_node(state: dict) -> dict:
             **agent.to_audit_entry(response),
         }
 
+        bias_entries = _run_bias_check(response.output, WorkflowStage.ANALYSIS.value)
+
         logger.info(
             "analysis_node: completed (confidence=%.2f, sources=%d)",
             response.confidence,
@@ -260,7 +319,7 @@ async def analysis_node(state: dict) -> dict:
         return {
             "analysis_result": response.output,
             "current_stage": WorkflowStage.ANALYSIS.value,
-            "audit_trail": [audit_entry],
+            "audit_trail": [audit_entry] + bias_entries,
             "retrieved_documents": response.sources_used,
         }
 
@@ -316,6 +375,8 @@ async def review_node(state: dict) -> dict:
             **agent.to_audit_entry(response),
         }
 
+        bias_entries = _run_bias_check(response.output, WorkflowStage.REVIEW.value)
+
         logger.info(
             "review_node: completed (confidence=%.2f, sources=%d)",
             response.confidence,
@@ -325,7 +386,7 @@ async def review_node(state: dict) -> dict:
         return {
             "review_result": response.output,
             "current_stage": WorkflowStage.REVIEW.value,
-            "audit_trail": [audit_entry],
+            "audit_trail": [audit_entry] + bias_entries,
             "retrieved_documents": response.sources_used,
         }
 
@@ -385,6 +446,8 @@ async def compliance_node(state: dict) -> dict:
             **agent.to_audit_entry(response),
         }
 
+        bias_entries = _run_bias_check(response.output, WorkflowStage.COMPLIANCE.value)
+
         logger.info(
             "compliance_node: completed (confidence=%.2f, sources=%d)",
             response.confidence,
@@ -394,7 +457,7 @@ async def compliance_node(state: dict) -> dict:
         return {
             "compliance_result": response.output,
             "current_stage": WorkflowStage.COMPLIANCE.value,
-            "audit_trail": [audit_entry],
+            "audit_trail": [audit_entry] + bias_entries,
             "retrieved_documents": response.sources_used,
         }
 

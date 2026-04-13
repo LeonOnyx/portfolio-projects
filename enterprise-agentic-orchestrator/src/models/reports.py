@@ -96,6 +96,15 @@ class ComplianceReport(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.utcnow)
 
     @model_validator(mode="after")
+    def checks_must_not_be_empty(self) -> ComplianceReport:
+        """At least one compliance check must be present."""
+        if not self.checks:
+            raise ValueError(
+                "ComplianceReport requires at least one compliance check"
+            )
+        return self
+
+    @model_validator(mode="after")
     def overall_passed_requires_all_checks(self) -> ComplianceReport:
         """overall_passed must be True only if ALL individual checks passed."""
         all_passed = all(check.passed for check in self.checks)

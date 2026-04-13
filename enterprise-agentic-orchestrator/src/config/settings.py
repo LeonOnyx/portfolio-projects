@@ -74,6 +74,7 @@ class EscalationTrigger(BaseModel):
 
     name: str
     condition: str
+    threshold: float | None = None
 
 
 class EscalationConfig(BaseModel):

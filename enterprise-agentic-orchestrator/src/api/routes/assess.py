@@ -63,20 +63,32 @@ async def assess_application(
 
     logger.info("Received assessment request %s", request_id)
 
-    with track_assessment_latency():
-        result = await traced_orchestrator_run(
-            orchestrator=orchestrator,
-            application=app_dict,
-            request_id=request_id,
-            user_role="api",
-            langfuse_handler=langfuse_handler,
+    try:
+        with track_assessment_latency():
+            result = await traced_orchestrator_run(
+                orchestrator=orchestrator,
+                application=app_dict,
+                request_id=request_id,
+                user_role="api",
+                langfuse_handler=langfuse_handler,
+            )
+
+        # Record domain metrics (decision counter, grounding histogram, etc.)
+        record_assessment_metrics(result)
+
+        # Persist before responding so GET /decisions/{id} is immediately available
+        await storage.save(request_id, result)
+
+        status_code, response_data = build_assessment_response(result)
+        return JSONResponse(status_code=status_code, content=response_data)
+
+    except Exception as exc:
+        logger.exception("Assessment failed for request %s: %s", request_id, exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "request_id": request_id,
+                "error": "internal_error",
+                "detail": f"Assessment pipeline failed: {type(exc).__name__}",
+            },
         )
-
-    # Record domain metrics (decision counter, grounding histogram, etc.)
-    record_assessment_metrics(result)
-
-    # Persist before responding so GET /decisions/{id} is immediately available
-    await storage.save(request_id, result)
-
-    status_code, response_data = build_assessment_response(result)
-    return JSONResponse(status_code=status_code, content=response_data)

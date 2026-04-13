@@ -7,8 +7,10 @@ for all subsequent entries.
 
 Design decisions:
     - GENESIS as initial previous_hash (well-known starting point)
-    - Only immutable fields (entry_id, timestamp, stage, action) are hashed
-    - details dict is NOT hashed (non-deterministic serialisation)
+    - All immutable fields (entry_id, timestamp, stage, action) AND details
+      dict are included in hash computation
+    - details dict IS included in hash via deterministic
+      json.dumps(sort_keys=True, default=str)
     - sort_keys=True in json.dumps for deterministic hash computation
     - In-memory list storage; export_json() for regulatory submission
     - request_id managed at AuditTrail level, not per-entry
@@ -84,7 +86,7 @@ class AuditTrail:
             stage: Pipeline stage (e.g. INTAKE, ANALYSIS, REVIEW).
             action: Specific action taken (e.g. input_received, analyst_started).
             agent: Name of the agent performing the action, if applicable.
-            details: Additional context dict (not included in hash).
+            details: Additional context dict (included in hash via deterministic serialisation).
             duration_ms: Execution duration in milliseconds, if applicable.
             token_count: LLM token usage, if applicable.
             input_hash: SHA-256 hash of input content, if applicable.
@@ -109,8 +111,10 @@ class AuditTrail:
             token_count=token_count,
         )
 
-        # Compute hash from previous_hash + immutable fields only.
-        # details dict is excluded to avoid non-deterministic serialisation.
+        # Compute hash from previous_hash + immutable fields + details.
+        # details is pre-serialised with json.dumps(sort_keys=True, default=str)
+        # to ensure deterministic string representation regardless of dict
+        # insertion order or Decimal/datetime types.
         content = json.dumps(
             {
                 "previous_hash": self._previous_hash,
@@ -118,6 +122,7 @@ class AuditTrail:
                 "timestamp": entry.timestamp.isoformat(),
                 "stage": entry.stage,
                 "action": entry.action,
+                "details": json.dumps(entry_details, sort_keys=True, default=str),
             },
             sort_keys=True,
         )
@@ -157,6 +162,7 @@ class AuditTrail:
                     "timestamp": entry.timestamp.isoformat(),
                     "stage": entry.stage,
                     "action": entry.action,
+                    "details": json.dumps(entry.details or {}, sort_keys=True, default=str),
                 },
                 sort_keys=True,
             )

@@ -8,6 +8,7 @@ that agents can consume directly.
 from __future__ import annotations
 
 import logging
+import os
 
 import weaviate
 
@@ -29,31 +30,34 @@ logger = logging.getLogger(__name__)
 def _get_weaviate_client() -> weaviate.WeaviateClient:
     """Return a Weaviate client connected to the local instance.
 
-    Reads connection parameters from ``config/config.yaml`` via
-    :class:`~src.config.ConfigLoader` when available, otherwise falls back
-    to the defaults (``localhost:8080``, gRPC port ``50051``).
+    Reads connection parameters from environment variables first (for Docker),
+    then falls back to ``config/config.yaml`` via :class:`~src.config.ConfigLoader`
+    when ``WEAVIATE_HOST`` is not set, and finally to built-in defaults
+    (``localhost:8080``, gRPC port ``50051``).
     """
-    host = "localhost"
-    port = 8080
-    grpc_port = 50051
+    host = os.environ.get("WEAVIATE_HOST", "localhost")
+    port = int(os.environ.get("WEAVIATE_HTTP_PORT", "8080"))
+    grpc_port = int(os.environ.get("WEAVIATE_GRPC_PORT", "50051"))
 
-    try:
-        from src.config import ConfigLoader
+    # Only consult ConfigLoader when env vars are NOT set (local dev)
+    if "WEAVIATE_HOST" not in os.environ:
+        try:
+            from src.config import ConfigLoader
 
-        cfg = ConfigLoader()
-        app_cfg = cfg.app()
-        # weaviate_url is like "http://localhost:8080"
-        url = app_cfg.providers.weaviate_url
-        if "://" in url:
-            url = url.split("://", 1)[1]
-        if ":" in url:
-            host, port_str = url.rsplit(":", 1)
-            port = int(port_str)
-        else:
-            host = url
-        grpc_port = app_cfg.providers.weaviate_grpc_port
-    except Exception:
-        logger.debug("ConfigLoader unavailable, using Weaviate defaults")
+            cfg = ConfigLoader()
+            app_cfg = cfg.app()
+            # weaviate_url is like "http://localhost:8080"
+            url = app_cfg.providers.weaviate_url
+            if "://" in url:
+                url = url.split("://", 1)[1]
+            if ":" in url:
+                host, port_str = url.rsplit(":", 1)
+                port = int(port_str)
+            else:
+                host = url
+            grpc_port = app_cfg.providers.weaviate_grpc_port
+        except Exception:
+            logger.debug("ConfigLoader unavailable, using Weaviate defaults")
 
     return weaviate.connect_to_local(host=host, port=port, grpc_port=grpc_port)
 
@@ -81,7 +85,7 @@ def rag_financial_lookup(
     financial_year: int | None = None,
     company_name: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search financial documents and return structured results with citations.
 
@@ -98,7 +102,7 @@ def rag_financial_lookup(
     limit:
         Maximum number of results (default 5).
     alpha:
-        Hybrid search blend weight (0 = keyword, 1 = vector, 0.5 = balanced).
+        Hybrid search blend weight (0 = keyword, 1 = vector, 0.7 = default).
 
     Returns
     -------
@@ -157,7 +161,7 @@ def rag_sector_analysis(
     query: str,
     sector: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search sector analysis documents and return structured results with citations.
 
@@ -228,7 +232,7 @@ def rag_policy_lookup(
     query: str,
     policy_area: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search regulatory policy documents and return structured results with citations.
 
@@ -299,7 +303,7 @@ def historical_comparator(
     sector: str | None = None,
     performance_outcome: str | None = None,
     limit: int = 5,
-    alpha: float = 0.5,
+    alpha: float = 0.7,
 ) -> dict:
     """Search historical decisions and return structured results with citations.
 

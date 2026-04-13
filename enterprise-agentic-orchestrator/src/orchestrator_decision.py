@@ -220,6 +220,13 @@ def check_escalation_triggers(state: dict) -> list[str]:
         )
         return []
 
+    # Build a threshold lookup so evaluator closures can read config-driven
+    # thresholds. The 'or' fallback in each evaluator ensures backward
+    # compatibility if the YAML doesn't have the threshold field.
+    thresholds: dict[str, float | None] = {
+        t.name: t.threshold for t in configured_triggers
+    }
+
     # Also load the grounding max_retries threshold up-front (once) so
     # the grounding_failure evaluator can reference it without re-reading
     # config for every trigger.
@@ -239,10 +246,11 @@ def check_escalation_triggers(state: dict) -> list[str]:
                 state["application"]["loan"]["amount_requested"]
             )
             amount = float(amount_raw)
-            if amount > 500_000:
+            limit = thresholds.get("high_value_loan") or 500_000
+            if amount > limit:
                 return (
                     f"high_value_loan: Loan amount {amount:.0f} "
-                    f"exceeds 500000 threshold"
+                    f"exceeds {limit:.0f} threshold"
                 )
         except (KeyError, TypeError, ValueError):
             return None
@@ -290,10 +298,11 @@ def check_escalation_triggers(state: dict) -> list[str]:
             )
             level_key = str(level).upper()
             numeric = _CONFIDENCE_LEVEL_SCORES.get(level_key, 0.9)
-            if numeric < 0.5:
+            limit = thresholds.get("low_reviewer_confidence") or 0.5
+            if numeric < limit:
                 return (
                     f"low_reviewer_confidence: Reviewer confidence_level="
-                    f"{level_key} (numeric={numeric:.1f}) below 0.5 threshold"
+                    f"{level_key} (numeric={numeric:.1f}) below {limit} threshold"
                 )
         except (AttributeError, TypeError):
             return None
@@ -355,10 +364,11 @@ def check_escalation_triggers(state: dict) -> list[str]:
             if not numeric_scores:
                 return None
             average = sum(numeric_scores) / len(numeric_scores)
-            if average < 0.75:
+            limit = thresholds.get("low_average_grounding") or 0.75
+            if average < limit:
                 return (
                     f"low_average_grounding: Average grounding score "
-                    f"{average:.2f} below 0.75 threshold "
+                    f"{average:.2f} below {limit} threshold "
                     f"(n={len(numeric_scores)})"
                 )
         except (AttributeError, TypeError, ZeroDivisionError):

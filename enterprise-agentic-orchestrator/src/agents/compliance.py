@@ -9,6 +9,7 @@ imports for all AutoGen modules.
 
 import json
 import logging
+import re as _re
 import time
 from typing import Any
 
@@ -16,6 +17,23 @@ from src.agents.base import AgentResponse, BaseAgent
 from src.models.reports import ComplianceReport
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Input sanitization (P1-11 -- prompt injection defence)
+# ---------------------------------------------------------------------------
+
+
+def _sanitize_field(value: str, max_length: int = 500) -> str:
+    """Strip control characters and limit length for safe prompt interpolation."""
+    if not isinstance(value, str):
+        return str(value)[:max_length]
+    # Remove control characters except newline and tab
+    cleaned = _re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
+    # Escape sequences that could be interpreted as prompt delimiters
+    cleaned = cleaned.replace("```", "` ` `")
+    return cleaned[:max_length]
+
 
 # ---------------------------------------------------------------------------
 # System prompt (AGNT-09 rules)
@@ -197,7 +215,12 @@ class ComplianceAgent(BaseAgent):
             return AgentResponse(
                 agent_name=self.name,
                 agent_framework=self.framework,
-                output={},
+                output={
+                    "application_id": context.get("application", {}).get("application_id", "unknown"),
+                    "checks": [],
+                    "overall_passed": False,
+                    "error": f"Compliance check failed: {type(exc).__name__}: {exc}",
+                },
                 reasoning_trace=f"Error: {exc}",
                 confidence=0.0,
                 sources_used=[],
@@ -211,19 +234,25 @@ class ComplianceAgent(BaseAgent):
         applicant = app.get("applicant", {})
 
         application_id = app.get("application_id", "unknown")
-        company_name = applicant.get("company_name", "unknown")
-        sector = app.get("sector", "unknown")
+        company_name = _sanitize_field(applicant.get("company_name", "unknown"))
+        sector = _sanitize_field(app.get("sector", "unknown"))
         loan_amount = app.get("loan_amount", "unknown")
         currency = app.get("currency", "GBP")
 
         # Extract analyst and reviewer assessments if available
         analyst = context.get("analyst_report", {})
-        analyst_recommendation = analyst.get("recommendation", "unknown")
-        analyst_reasoning = analyst.get("reasoning", "not provided")
+        analyst_recommendation = _sanitize_field(
+            str(analyst.get("recommendation", "unknown"))
+        )
+        analyst_reasoning = _sanitize_field(
+            str(analyst.get("reasoning", "not provided")), max_length=1000
+        )
 
         reviewer = context.get("reviewer_report", {})
         reviewer_agrees = reviewer.get("agrees_with_analyst", "unknown")
-        reviewer_reasoning = reviewer.get("reasoning", "not provided")
+        reviewer_reasoning = _sanitize_field(
+            str(reviewer.get("reasoning", "not provided")), max_length=1000
+        )
 
         # Portfolio context for concentration check
         portfolio = context.get("portfolio", {})

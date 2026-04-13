@@ -305,6 +305,7 @@ class TestDecisionNode:
         # Mock ConfigLoader with high_value_loan trigger
         trigger = MagicMock()
         trigger.name = "high_value_loan"
+        trigger.threshold = 500_000
         mock_guardrails = MagicMock()
         mock_guardrails.escalation.triggers = [trigger]
         mock_guardrails.grounding.max_retries = 2

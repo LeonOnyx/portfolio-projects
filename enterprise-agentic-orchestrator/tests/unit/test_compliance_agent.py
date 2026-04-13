@@ -504,7 +504,10 @@ class TestComplianceAgentExecuteError:
 
         assert isinstance(response, AgentResponse)
         assert response.agent_name == "compliance_officer"
-        assert response.output == {}
+        # P0-5: error path now returns a proper error-indicating dict
+        assert response.output["overall_passed"] is False
+        assert response.output["application_id"] == "APP-TEST-001"
+        assert "Compliance check failed" in response.output["error"]
         assert "Model endpoint unavailable" in response.reasoning_trace
         assert response.confidence == 0.0
 
@@ -519,7 +522,8 @@ class TestComplianceAgentExecuteError:
             response = await agent.execute(compliance_context, tools=[])
 
         assert isinstance(response, AgentResponse)
-        assert response.output == {}
+        # P0-5: error path now returns a proper error-indicating dict
+        assert response.output["overall_passed"] is False
         assert response.confidence == 0.0
 
     async def test_report_extraction_failure_returns_error(
@@ -550,7 +554,8 @@ class TestComplianceAgentExecuteError:
         ):
             response = await agent.execute(compliance_context, tools=[])
 
-        assert response.output == {}
+        # P0-5: error path now returns a proper error-indicating dict
+        assert response.output["overall_passed"] is False
         assert "Error" in response.reasoning_trace
 
 

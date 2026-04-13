@@ -90,23 +90,25 @@ def init_dependencies(data_dir: str = "data/assessments") -> None:
 def get_orchestrator() -> CreditRiskOrchestrator:
     """Return the shared CreditRiskOrchestrator instance.
 
-    Raises :class:`AssertionError` if :func:`init_dependencies` has
+    Raises :class:`RuntimeError` if :func:`init_dependencies` has
     not been called -- this is a programming error, not a runtime
-    condition, so an assertion is appropriate.
+    condition.
     """
-    assert _orchestrator is not None, (
-        "CreditRiskOrchestrator not initialised -- "
-        "call init_dependencies() at app startup"
-    )
+    if _orchestrator is None:
+        raise RuntimeError(
+            "CreditRiskOrchestrator not initialised -- "
+            "call init_dependencies() at app startup"
+        )
     return _orchestrator
 
 
 def get_storage() -> AssessmentStorage:
     """Return the shared AssessmentStorage instance."""
-    assert _storage is not None, (
-        "AssessmentStorage not initialised -- "
-        "call init_dependencies() at app startup"
-    )
+    if _storage is None:
+        raise RuntimeError(
+            "AssessmentStorage not initialised -- "
+            "call init_dependencies() at app startup"
+        )
     return _storage
 
 
